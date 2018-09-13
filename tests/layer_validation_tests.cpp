@@ -2887,6 +2887,105 @@ TEST_F(VkLayerTest, BindImageInvalidMemoryType) {
     vkFreeMemory(m_device->device(), mem, NULL);
 }
 
+TEST_F(VkLayerTest, ShannonsTest) {
+    VkResult err;
+
+    ASSERT_NO_FATAL_FAILURE(Init());
+
+    VkBufferCreateInfo buffer_create_info = {};
+    buffer_create_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    buffer_create_info.pNext = nullptr;
+    buffer_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    buffer_create_info.queueFamilyIndexCount = 0;
+    buffer_create_info.pQueueFamilyIndices = nullptr;
+    buffer_create_info.size = 256;
+    buffer_create_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+    buffer_create_info.flags = 0;
+
+    VkBuffer buffer;
+    err = vkCreateBuffer(m_device->device(), &buffer_create_info, NULL, &buffer);
+    ASSERT_VK_SUCCESS(err);
+
+    VkPhysicalDeviceMemoryProperties memory_info;
+    vkGetPhysicalDeviceMemoryProperties(gpu(), &memory_info);
+    VkMemoryRequirements memory_requirements;
+    vkGetBufferMemoryRequirements(m_device->device(), buffer, &memory_requirements);
+
+    std::uint32_t memory_type = VK_MAX_MEMORY_TYPES;
+    VkFlags required_memory_property = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    for (auto i = 0u; i < memory_info.memoryTypeCount; ++i) {
+        auto memory_properties = memory_info.memoryTypes[i].propertyFlags;
+        if (((memory_properties & required_memory_property) == required_memory_property) && 
+            (((1 << i) & memory_requirements.memoryTypeBits) != 0)) {
+            memory_type = i;
+            break;
+        }
+    }
+    assert(memory_type != VK_MAX_MEMORY_TYPES);
+
+    VkMemoryAllocateInfo memory_allocate_info;
+    memory_allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    memory_allocate_info.pNext = nullptr;
+    memory_allocate_info.allocationSize = 1024 * 1024;
+    memory_allocate_info.memoryTypeIndex = memory_type;
+
+    VkDeviceMemory memory;
+    err = vkAllocateMemory(m_device->device(), &memory_allocate_info, nullptr, &memory);
+    ASSERT_VK_SUCCESS(err);
+
+    err = vkBindBufferMemory(m_device->device(), buffer, memory, 0);
+    ASSERT_VK_SUCCESS(err);
+
+    vkFreeMemory(device(), memory, NULL);
+    vkDestroyBuffer(m_device->device(), buffer, NULL);
+
+    // Try to bind memory to an object that already has a memory binding
+    //{
+    //    VkImage image = VK_NULL_HANDLE;
+    //    err = vkCreateImage(device(), &image_create_info, NULL, &image);
+    //    ASSERT_VK_SUCCESS(err);
+    //    VkBuffer buffer = VK_NULL_HANDLE;
+    //    err = vkCreateBuffer(device(), &buffer_create_info, NULL, &buffer);
+    //    ASSERT_VK_SUCCESS(err);
+    //    VkMemoryRequirements image_mem_reqs = {}, buffer_mem_reqs = {};
+    //    vkGetImageMemoryRequirements(device(), image, &image_mem_reqs);
+    //    vkGetBufferMemoryRequirements(device(), buffer, &buffer_mem_reqs);
+    //    VkMemoryAllocateInfo image_alloc_info = {}, buffer_alloc_info = {};
+    //    image_alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    //    image_alloc_info.allocationSize = image_mem_reqs.size;
+    //    buffer_alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    //    buffer_alloc_info.allocationSize = buffer_mem_reqs.size;
+    //    pass = m_device->phy().set_memory_type(image_mem_reqs.memoryTypeBits, &image_alloc_info, 0);
+    //    ASSERT_TRUE(pass);
+    //    pass = m_device->phy().set_memory_type(buffer_mem_reqs.memoryTypeBits, &buffer_alloc_info, 0);
+    //    ASSERT_TRUE(pass);
+    //    VkDeviceMemory image_mem, buffer_mem;
+    //    err = vkAllocateMemory(device(), &image_alloc_info, NULL, &image_mem);
+    //    ASSERT_VK_SUCCESS(err);
+    //    err = vkAllocateMemory(device(), &buffer_alloc_info, NULL, &buffer_mem);
+    //    ASSERT_VK_SUCCESS(err);
+
+    //    err = vkBindImageMemory(device(), image, image_mem, 0);
+    //    ASSERT_VK_SUCCESS(err);
+    //    m_errorMonitor->SetDesiredFailureMsg(VK_DEBUG_REPORT_ERROR_BIT_EXT, "VUID-vkBindImageMemory-image-01044");
+    //    err = vkBindImageMemory(device(), image, image_mem, 0);
+    //    (void)err;  // This may very well return an error.
+    //    m_errorMonitor->VerifyFound();
+
+    //    err = vkBindBufferMemory(device(), buffer, buffer_mem, 0);
+    //    ASSERT_VK_SUCCESS(err);
+    //    m_errorMonitor->SetDesiredFailureMsg(VK_DEBUG_REPORT_ERROR_BIT_EXT, "VUID-vkBindBufferMemory-buffer-01029");
+    //    err = vkBindBufferMemory(device(), buffer, buffer_mem, 0);
+    //    (void)err;  // This may very well return an error.
+    //    m_errorMonitor->VerifyFound();
+
+    //    vkFreeMemory(device(), image_mem, NULL);
+    //    vkFreeMemory(device(), buffer_mem, NULL);
+    //    vkDestroyImage(device(), image, NULL);
+    //    vkDestroyBuffer(device(), buffer, NULL);
+    //}
+}
+
 TEST_F(VkLayerTest, BindInvalidMemory) {
     VkResult err;
     bool pass;
