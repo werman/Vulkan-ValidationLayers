@@ -1288,6 +1288,156 @@ class ExtensionChain {
 // ********************************************************************************************************************
 // ********************************************************************************************************************
 // ********************************************************************************************************************
+TEST_F(VkLayerTest, ReproLX817) {
+    TEST_DESCRIPTION("repro.");
+
+        //#include <iostream>
+        //#include <vulkan.h>
+
+        //int WINAPI WinMain(HINSTANCE hinst, HINSTANCE, LPSTR, int)
+        //{
+        //  const char* instance_layers[] = {
+        //    "VK_LAYER_LUNARG_standard_validation"   // Enabling this causes the failure to occur.
+        //  };
+
+        //  std::cout << "Using Vulkan header " << VK_HEADER_VERSION << std::endl;
+        //  const char* instance_extensions[] = {
+        //    VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, //"VK_KHR_get_physical_device_properties2",
+        //    VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME // "VK_KHR_external_memory_capabilities",
+        //  };
+
+        //  const VkInstanceCreateInfo instance_info = {
+        //    VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+        //    nullptr,
+        //    0,
+        //    nullptr,
+        //    1,
+        //    instance_layers,
+        //    sizeof(instance_extensions) / sizeof(*instance_extensions),
+        //    instance_extensions,
+        //  };
+
+        //  VkInstance instance;
+        //  VkResult vkResult = vkCreateInstance(&instance_info, nullptr, &instance);
+        //  if (vkResult != VK_SUCCESS) {
+        //    std::cout << "Instance creation failed with error " << vkResult << std::endl;
+        //  }
+
+        //  uint32_t pdev_count;
+        //  vkEnumeratePhysicalDevices(instance, &pdev_count, nullptr);
+        //  std::vector<VkPhysicalDevice> pdevs(pdev_count);
+        //  vkEnumeratePhysicalDevices(instance, &pdev_count, pdevs.data());
+        //  pdevs.resize(pdev_count);
+
+        //  for (VkPhysicalDevice pdev : pdevs) {
+        //    PFN_vkGetPhysicalDeviceProperties2KHR GetPhysicalDeviceProperties2KHR =
+        //      (PFN_vkGetPhysicalDeviceProperties2KHR)vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceProperties2KHR");
+        //    VkPhysicalDeviceProperties2KHR properties = {
+        //      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2_KHR,
+        //      nullptr,
+        //    };
+
+        //    GetPhysicalDeviceProperties2KHR(pdev, &properties);
+        //    std::cout << properties.properties.deviceName << std::endl;
+
+        //    // Begin Oculus repro code
+        //    PFN_vkGetPhysicalDeviceImageFormatProperties2KHR GetPhysicalDeviceImageFormatProperties2KHR =
+        //      (PFN_vkGetPhysicalDeviceImageFormatProperties2KHR)vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceImageFormatProperties2KHR");
+
+        //    VkPhysicalDeviceExternalImageFormatInfoKHR devExtImgFmtInfo = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO_KHR };
+        //    devExtImgFmtInfo.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_KMT_BIT_KHR;
+
+        //    VkPhysicalDeviceImageFormatInfo2KHR devImgFmtInfo = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2_KHR, &devExtImgFmtInfo };
+        //    devImgFmtInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+        //    devImgFmtInfo.type = VK_IMAGE_TYPE_2D;
+        //    devImgFmtInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        //    devImgFmtInfo.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+        //    // The problem is that extImgFmtProps is ignored by the call to GetPhysicalDeviceImageFormatProperties2KHR, starting with Vulkan SDK 1.1.92.1
+        //    VkExternalImageFormatPropertiesKHR extImgFmtProps = { VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES_KHR, nullptr,{ 999, 999, 999 } };
+        //    VkImageFormatProperties2KHR imgFmtProps = { VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2_KHR };
+        //    imgFmtProps.pNext = &extImgFmtProps;
+        //    auto vkResult = GetPhysicalDeviceImageFormatProperties2KHR(pdev, &devImgFmtInfo, &imgFmtProps);
+        //    if (vkResult != VK_SUCCESS)
+        //      std::cout << "GetPhysicalDeviceImageFormatProperties2KHR failure" << std::endl;
+
+        //    if (extImgFmtProps.externalMemoryProperties.compatibleHandleTypes == 999)
+        //      std::cout << "VkExternalImageFormatPropertiesKHR ignored by GetPhysicalDeviceImageFormatProperties2KHR" << std::endl;
+        //    // End Oculus repro code
+        //  }
+
+        //  vkDestroyInstance(instance, nullptr);
+        //  return 0;
+        //}
+
+
+    SetTargetApiVersion(VK_API_VERSION_1_1);
+    ASSERT_NO_FATAL_FAILURE(Init());
+    if (m_instance_api_version == VK_API_VERSION_1_1) { printf("Got API v1.1\n"); }
+    else if (m_instance_api_version == VK_API_VERSION_1_0) { printf("Got API v1.0\n"); }
+    else { printf("Got API 0x%x\n", m_instance_api_version); }
+
+    //if (InstanceExtensionSupported(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)) {
+    //    m_instance_extension_names.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+    //} else {
+    //    printf("%s Did not find required instance extension %s; skipped.\n", kSkipPrefix,
+    //           VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+    //    return;
+    //}
+    //ASSERT_NO_FATAL_FAILURE(InitFramework(myDbgFunc, m_errorMonitor));
+
+    //std::array<const char *, 2> required_device_extensions = {
+    //    {VK_KHR_MAINTENANCE3_EXTENSION_NAME, VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME}};
+    //for (auto device_extension : required_device_extensions) {
+    //    if (DeviceExtensionSupported(gpu(), nullptr, device_extension)) {
+    //        m_device_extension_names.push_back(device_extension);
+    //    } else {
+    //        printf("%s %s Extension not supported, skipping tests\n", kSkipPrefix, device_extension);
+    //        return;
+    //    }
+    //}
+    //ASSERT_NO_FATAL_FAILURE(InitState());
+
+    //PFN_vkGetPhysicalDeviceFeatures2KHR vkGetPhysicalDeviceFeatures2KHR = (PFN_vkGetPhysicalDeviceFeatures2KHR)vkGetInstanceProcAddr(instance(), "vkGetPhysicalDeviceFeatures2KHR");
+    //ASSERT_TRUE(vkGetPhysicalDeviceFeatures2KHR != nullptr);
+
+    VkPhysicalDeviceProperties2KHR properties = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2_KHR, nullptr, };
+
+    vkGetPhysicalDeviceProperties2(gpu(), &properties);
+    std::cout << properties.properties.deviceName << std::endl;
+
+    // Begin Oculus repro code
+    //PFN_vkGetPhysicalDeviceImageFormatProperties2KHR GetPhysicalDeviceImageFormatProperties2KHR =
+    //  (PFN_vkGetPhysicalDeviceImageFormatProperties2KHR)vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceImageFormatProperties2KHR");
+
+    VkPhysicalDeviceExternalImageFormatInfoKHR devExtImgFmtInfo = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO_KHR };
+    devExtImgFmtInfo.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_KMT_BIT_KHR;
+
+    VkPhysicalDeviceImageFormatInfo2KHR devImgFmtInfo = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2_KHR, &devExtImgFmtInfo };
+    devImgFmtInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    devImgFmtInfo.type = VK_IMAGE_TYPE_2D;
+    devImgFmtInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    devImgFmtInfo.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+    // The problem is that extImgFmtProps is ignored by the call to GetPhysicalDeviceImageFormatProperties2KHR, starting with Vulkan SDK 1.1.92.1
+    VkExternalImageFormatPropertiesKHR extImgFmtProps = { VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES_KHR, nullptr, };
+    extImgFmtProps.externalMemoryProperties = { 999, 999, 999 };
+
+    VkImageFormatProperties2KHR imgFmtProps = { VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2_KHR };
+    imgFmtProps.pNext = &extImgFmtProps;
+    imgFmtProps.imageFormatProperties.sampleCounts = VK_SAMPLE_COUNT_64_BIT;
+                   
+    auto vkResult = vkGetPhysicalDeviceImageFormatProperties2(gpu(), &devImgFmtInfo, &imgFmtProps);
+    if (vkResult != VK_SUCCESS)
+      std::cout << "GetPhysicalDeviceImageFormatProperties2KHR failure" << std::endl;
+
+    if (extImgFmtProps.externalMemoryProperties.compatibleHandleTypes == 999)
+      std::cout << "VkExternalImageFormatPropertiesKHR ignored by GetPhysicalDeviceImageFormatProperties2KHR" << std::endl;
+    // End Oculus repro code
+}
+
+
+
 TEST_F(VkLayerTest, RequiredParameter) {
     TEST_DESCRIPTION("Specify VK_NULL_HANDLE, NULL, and 0 for required handle, pointer, array, and array count parameters");
 
