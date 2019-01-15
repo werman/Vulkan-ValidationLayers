@@ -121,7 +121,7 @@ if(WIN32)
         add_library(VkLayer_${target} SHARED ${ARGN} VkLayer_${target}.def)
         target_compile_definitions(VkLayer_${target} PUBLIC ${LAYER_COMPILE_DEFINITIONS})
         target_link_libraries(VkLayer_${target} PRIVATE VkLayer_utils VkLayer_chassis)
-        add_dependencies(VkLayer_${target} VulkanVL_generate_helper_files VkLayer_utils)
+        add_dependencies(VkLayer_${target} VulkanVL_generate_helper_files VkLayer_utils )
         install(TARGETS VkLayer_${target} DESTINATION ${CMAKE_INSTALL_LIBDIR})
     endmacro()
 elseif(APPLE)
@@ -190,17 +190,28 @@ GenerateFromVkXml(layer_chassis_dispatch_generator.py layer_chassis_dispatch.cpp
 # This target causes the chassis source files to be generated and compiled.
 add_library(VkLayer_chassis STATIC
     layer_chassis_dispatch.cpp
-    layer_chassis_dispatch.h)
+    chassis.cpp
+)
+
+add_custom_target(VulkanVL_generate_chassis_files
+                  DEPENDS 
+                          chassis.h
+                          layer_chassis_dispatch.h
+                          )
+set_target_properties(VulkanVL_generate_chassis_files PROPERTIES FOLDER ${LAYERS_HELPER_FOLDER})
+add_dependencies(VkLayer_chassis VulkanVL_generate_chassis_files VulkanVL_generate_helper_files VkLayer_utils)
+
+
 target_compile_definitions(VkLayer_chassis PUBLIC ${LAYER_COMPILE_DEFINITIONS})
 target_include_directories(VkLayer_chassis PUBLIC ${PROJECT_BINARY_DIR})
 file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/empty_file.cpp "")
 
 if(BUILD_LAYERS)
     AddVkLayer(core_validation "" core_validation.cpp convert_to_renderpass2.cpp descriptor_sets.cpp buffer_validation.cpp shader_validation.cpp gpu_validation.cpp xxhash.c)
-    AddVkLayer(object_lifetimes "BUILD_OBJECT_TRACKER" object_tracker.cpp object_tracker.h object_tracker_utils.cpp chassis.cpp chassis.h)
-    AddVkLayer(thread_safety "BUILD_THREAD_SAFETY" thread_safety.cpp thread_safety.h chassis.cpp chassis.h)
-    AddVkLayer(unique_objects "LAYER_CHASSIS_CAN_WRAP_HANDLES" ${CMAKE_CURRENT_BINARY_DIR}/empty_file.cpp chassis.cpp chassis.h)
-    AddVkLayer(stateless_validation "BUILD_PARAMETER_VALIDATION" parameter_validation.cpp parameter_validation.h parameter_validation_utils.cpp chassis.cpp chassis.h)
+    AddVkLayer(object_lifetimes "BUILD_OBJECT_TRACKER" object_tracker.cpp object_tracker.h object_tracker_utils.cpp )
+    AddVkLayer(thread_safety "BUILD_THREAD_SAFETY" thread_safety.cpp thread_safety.h )
+    AddVkLayer(unique_objects "LAYER_CHASSIS_CAN_WRAP_HANDLES" ${CMAKE_CURRENT_BINARY_DIR}/empty_file.cpp )
+    AddVkLayer(stateless_validation "BUILD_PARAMETER_VALIDATION" parameter_validation.cpp parameter_validation.h parameter_validation_utils.cpp )
 
     # Core validation has additional dependencies
     target_include_directories(VkLayer_core_validation PRIVATE ${GLSLANG_SPIRV_INCLUDE_DIR})
