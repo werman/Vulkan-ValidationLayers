@@ -140,9 +140,7 @@ VkResult GpuDeviceMemoryManager::AllocMemoryChunk(MemoryChunk &chunk) {
     mem_alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     mem_alloc.pNext = NULL;
     mem_alloc.allocationSize = mem_reqs.size;
-    pass = MemoryTypeFromProperties(mem_reqs.memoryTypeBits,
-                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                                    &mem_alloc.memoryTypeIndex);
+    pass = MemoryTypeFromProperties(mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &mem_alloc.memoryTypeIndex);
     if (!pass) {
         dispatch_table->DestroyBuffer(GetDevice(dev_data_), buffer, NULL);
         return result;
@@ -163,6 +161,13 @@ VkResult GpuDeviceMemoryManager::AllocMemoryChunk(MemoryChunk &chunk) {
     result = dispatch_table->MapMemory(GetDevice(dev_data_), memory, 0, mem_alloc.allocationSize, 0, &pData);
     if (result == VK_SUCCESS) {
         memset(pData, 0, chunk_size_);
+        VkMappedMemoryRange range;
+        range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+        range.pNext = NULL;
+        range.memory = memory;
+        range.offset = 0;
+        range.size = mem_alloc.allocationSize;
+        dispatch_table->FlushMappedMemoryRanges(GetDevice(dev_data_), 1, &range);
         dispatch_table->UnmapMemory(GetDevice(dev_data_), memory);
     } else {
         dispatch_table->DestroyBuffer(GetDevice(dev_data_), buffer, NULL);
@@ -1102,9 +1107,18 @@ static void ProcessInstrumentationBuffer(const layer_data *dev_data, VkQueue que
         block_size += offset_to_data;
         result = GetDispatchTable(dev_data)->MapMemory(cb_node->device, cb_node->gpu_output_memory_block.memory, block_offset,
                                                        block_size, 0, (void **)&pData);
+        VkMappedMemoryRange range;
+        range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+        range.pNext = NULL;
+        range.memory = cb_node->gpu_output_memory_block.memory;
+        range.offset = 0;
+        range.size = VK_WHOLE_SIZE;
+        GetDispatchTable(dev_data)->InvalidateMappedMemoryRanges(cb_node->device, 1, &range);
+
         // Analyze debug output buffer
         if (result == VK_SUCCESS) {
             AnalyzeAndReportError(dev_data, cb_node, queue, (uint32_t *)(pData + offset_to_data));
+            GetDispatchTable(dev_data)->FlushMappedMemoryRanges(cb_node->device, 1, &range);
             GetDispatchTable(dev_data)->UnmapMemory(cb_node->device, cb_node->gpu_output_memory_block.memory);
         }
     }
