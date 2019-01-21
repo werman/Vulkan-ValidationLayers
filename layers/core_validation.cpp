@@ -474,7 +474,7 @@ bool ValidateMemoryIsBoundToBuffer(const layer_data *dev_data, const BUFFER_STAT
 // SetMemBinding is used to establish immutable, non-sparse binding between a single image/buffer object and memory object.
 // Corresponding valid usage checks are in ValidateSetMemBinding().
 static void SetMemBinding(layer_data *dev_data, VkDeviceMemory mem, BINDABLE *mem_binding, VkDeviceSize memory_offset,
-                          uint64_t handle, VulkanObjectType type, const char *apiName) {
+                          uint64_t handle, VulkanObjectType type) {
     assert(mem_binding);
     mem_binding->binding.mem = mem;
     mem_binding->UpdateBoundMemorySet();  // force recreation of cached set
@@ -3689,31 +3689,36 @@ static void RecordDestroySamplerYcbcrConversionANDROID(layer_data *dev_data, VkS
 
 #endif  // VK_USE_PLATFORM_ANDROID_KHR
 
-bool PreCallValidateAllocateMemory(layer_data *dev_data, const VkMemoryAllocateInfo *alloc_info) {
+bool PreCallValidateAllocateMemory(VkDevice device, const VkMemoryAllocateInfo *pAllocateInfo,
+                                   const VkAllocationCallbacks *pAllocator, VkDeviceMemory *pMemory) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
     bool skip = false;
-    if (dev_data->memObjMap.size() >= dev_data->phys_dev_properties.properties.limits.maxMemoryAllocationCount) {
-        skip |= log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_EXT,
-                        HandleToUint64(dev_data->device), kVUIDUndefined,
+    if (device_data->memObjMap.size() >= device_data->phys_dev_properties.properties.limits.maxMemoryAllocationCount) {
+        skip |= log_msg(device_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_EXT,
+                        HandleToUint64(device), kVUIDUndefined,
                         "Number of currently valid memory objects is not less than the maximum allowed (%u).",
-                        dev_data->phys_dev_properties.properties.limits.maxMemoryAllocationCount);
+                        device_data->phys_dev_properties.properties.limits.maxMemoryAllocationCount);
     }
 
-    if (GetDeviceExtensions(dev_data)->vk_android_external_memory_android_hardware_buffer) {
-        skip |= ValidateAllocateMemoryANDROID(dev_data, alloc_info);
+    if (GetDeviceExtensions(device_data)->vk_android_external_memory_android_hardware_buffer) {
+        skip |= ValidateAllocateMemoryANDROID(device_data, pAllocateInfo);
     } else {
-        if (0 == alloc_info->allocationSize) {
-            skip |= log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_EXT,
-                            HandleToUint64(dev_data->device), "VUID-VkMemoryAllocateInfo-allocationSize-00638",
+        if (0 == pAllocateInfo->allocationSize) {
+            skip |= log_msg(device_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_EXT,
+                            HandleToUint64(device), "VUID-VkMemoryAllocateInfo-allocationSize-00638",
                             "vkAllocateMemory: allocationSize is 0.");
         };
     }
     // TODO: VUIDs ending in 00643, 00644, 00646, 00647, 01742, 01743, 01745, 00645, 00648, 01744
-
     return skip;
 }
 
-void PostCallRecordAllocateMemory(layer_data *dev_data, const VkMemoryAllocateInfo *pAllocateInfo, VkDeviceMemory *pMemory) {
-    AddMemObjInfo(dev_data, dev_data->device, *pMemory, pAllocateInfo);
+void PostCallRecordAllocateMemory(VkDevice device, const VkMemoryAllocateInfo *pAllocateInfo,
+                                  const VkAllocationCallbacks *pAllocator, VkDeviceMemory *pMemory, VkResult result) {
+    if (VK_SUCCESS == result) {
+        layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
+        AddMemObjInfo(device_data, device, *pMemory, pAllocateInfo);
+    }
     return;
 }
 
@@ -3731,30 +3736,34 @@ bool ValidateObjectNotInUse(const layer_data *dev_data, BASE_NODE *obj_node, VK_
     return skip;
 }
 
-bool PreCallValidateFreeMemory(layer_data *dev_data, VkDeviceMemory mem, DEVICE_MEM_INFO **mem_info, VK_OBJECT *obj_struct) {
-    *mem_info = GetMemObjInfo(dev_data, mem);
-    *obj_struct = {HandleToUint64(mem), kVulkanObjectTypeDeviceMemory};
-    if (dev_data->instance_data->disabled.free_memory) return false;
+bool PreCallValidateFreeMemory(VkDevice device, VkDeviceMemory mem, const VkAllocationCallbacks *pAllocator) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
+    DEVICE_MEM_INFO *mem_info = GetMemObjInfo(device_data, mem);
+    VK_OBJECT obj_struct = {HandleToUint64(mem), kVulkanObjectTypeDeviceMemory};
     bool skip = false;
-    if (*mem_info) {
-        skip |= ValidateObjectNotInUse(dev_data, *mem_info, *obj_struct, "vkFreeMemory", "VUID-vkFreeMemory-memory-00677");
+    if (mem_info) {
+        skip |= ValidateObjectNotInUse(device_data, mem_info, obj_struct, "vkFreeMemory", "VUID-vkFreeMemory-memory-00677");
     }
     return skip;
 }
 
-void PreCallRecordFreeMemory(layer_data *dev_data, VkDeviceMemory mem, DEVICE_MEM_INFO *mem_info, VK_OBJECT obj_struct) {
+void PreCallRecordFreeMemory(VkDevice device, VkDeviceMemory mem, const VkAllocationCallbacks *pAllocator) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
+    DEVICE_MEM_INFO *mem_info = GetMemObjInfo(device_data, mem);
+    VK_OBJECT obj_struct = {HandleToUint64(mem), kVulkanObjectTypeDeviceMemory};
+
     // Clear mem binding for any bound objects
     for (auto obj : mem_info->obj_bindings) {
-        log_msg(dev_data->report_data, VK_DEBUG_REPORT_INFORMATION_BIT_EXT, get_debug_report_enum[obj.type], obj.handle,
+        log_msg(device_data->report_data, VK_DEBUG_REPORT_INFORMATION_BIT_EXT, get_debug_report_enum[obj.type], obj.handle,
                 kVUID_Core_MemTrack_FreedMemRef, "VK Object 0x%" PRIx64 " still has a reference to mem obj 0x%" PRIx64,
                 HandleToUint64(obj.handle), HandleToUint64(mem_info->mem));
         BINDABLE *bindable_state = nullptr;
         switch (obj.type) {
             case kVulkanObjectTypeImage:
-                bindable_state = GetImageState(dev_data, reinterpret_cast<VkImage &>(obj.handle));
+                bindable_state = GetImageState(device_data, reinterpret_cast<VkImage &>(obj.handle));
                 break;
             case kVulkanObjectTypeBuffer:
-                bindable_state = GetBufferState(dev_data, reinterpret_cast<VkBuffer &>(obj.handle));
+                bindable_state = GetBufferState(device_data, reinterpret_cast<VkBuffer &>(obj.handle));
                 break;
             default:
                 // Should only have buffer or image objects bound to memory
@@ -3766,8 +3775,8 @@ void PreCallRecordFreeMemory(layer_data *dev_data, VkDeviceMemory mem, DEVICE_ME
         bindable_state->UpdateBoundMemorySet();
     }
     // Any bound cmd buffers are now invalid
-    InvalidateCommandBuffers(dev_data, mem_info->cb_bindings, obj_struct);
-    dev_data->memObjMap.erase(mem);
+    InvalidateCommandBuffers(device_data, mem_info->cb_bindings, obj_struct);
+    device_data->memObjMap.erase(mem);
 }
 
 // Validate that given Map memory range is valid. This means that the memory should not already be mapped,
@@ -4267,40 +4276,40 @@ static bool ValidateMemoryTypes(const layer_data *dev_data, const DEVICE_MEM_INF
     return skip;
 }
 
-bool PreCallValidateBindBufferMemory(layer_data *dev_data, VkBuffer buffer, BUFFER_STATE *buffer_state, VkDeviceMemory mem,
-                                     VkDeviceSize memoryOffset, const char *api_name) {
+bool ValidateBindBufferMemory(layer_data *device_data, VkBuffer buffer, VkDeviceMemory mem, VkDeviceSize memoryOffset,
+                              const char *api_name) {
+    BUFFER_STATE *buffer_state = GetBufferState(device_data, buffer);
+
     bool skip = false;
     if (buffer_state) {
-        unique_lock_t lock(global_lock);
         // Track objects tied to memory
         uint64_t buffer_handle = HandleToUint64(buffer);
-        skip = ValidateSetMemBinding(dev_data, mem, buffer_handle, kVulkanObjectTypeBuffer, api_name);
+        skip = ValidateSetMemBinding(device_data, mem, buffer_handle, kVulkanObjectTypeBuffer, api_name);
         if (!buffer_state->memory_requirements_checked) {
             // There's not an explicit requirement in the spec to call vkGetBufferMemoryRequirements() prior to calling
             // BindBufferMemory, but it's implied in that memory being bound must conform with VkMemoryRequirements from
             // vkGetBufferMemoryRequirements()
-            skip |= log_msg(dev_data->report_data, VK_DEBUG_REPORT_WARNING_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_EXT,
+            skip |= log_msg(device_data->report_data, VK_DEBUG_REPORT_WARNING_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_EXT,
                             buffer_handle, kVUID_Core_DrawState_InvalidBuffer,
                             "%s: Binding memory to buffer 0x%" PRIx64
                             " but vkGetBufferMemoryRequirements() has not been called on that buffer.",
                             api_name, HandleToUint64(buffer_handle));
             // Make the call for them so we can verify the state
-            lock.unlock();
-            dev_data->dispatch_table.GetBufferMemoryRequirements(dev_data->device, buffer, &buffer_state->requirements);
-            lock.lock();
+            device_data->dispatch_table.GetBufferMemoryRequirements(device_data->device, buffer, &buffer_state->requirements);
         }
 
         // Validate bound memory range information
-        const auto mem_info = GetMemObjInfo(dev_data, mem);
+        const auto mem_info = GetMemObjInfo(device_data, mem);
         if (mem_info) {
-            skip |= ValidateInsertBufferMemoryRange(dev_data, buffer, mem_info, memoryOffset, buffer_state->requirements, api_name);
-            skip |= ValidateMemoryTypes(dev_data, mem_info, buffer_state->requirements.memoryTypeBits, api_name,
+            skip |=
+                ValidateInsertBufferMemoryRange(device_data, buffer, mem_info, memoryOffset, buffer_state->requirements, api_name);
+            skip |= ValidateMemoryTypes(device_data, mem_info, buffer_state->requirements.memoryTypeBits, api_name,
                                         "VUID-vkBindBufferMemory-memory-01035");
         }
 
         // Validate memory requirements alignment
         if (SafeModulo(memoryOffset, buffer_state->requirements.alignment) != 0) {
-            skip |= log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_EXT,
+            skip |= log_msg(device_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_EXT,
                             buffer_handle, "VUID-vkBindBufferMemory-memoryOffset-01036",
                             "%s: memoryOffset is 0x%" PRIxLEAST64
                             " but must be an integer multiple of the VkMemoryRequirements::alignment value 0x%" PRIxLEAST64
@@ -4311,7 +4320,7 @@ bool PreCallValidateBindBufferMemory(layer_data *dev_data, VkBuffer buffer, BUFF
         if (mem_info) {
             // Validate memory requirements size
             if (buffer_state->requirements.size > (mem_info->alloc_info.allocationSize - memoryOffset)) {
-                skip |= log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_EXT,
+                skip |= log_msg(device_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_EXT,
                                 buffer_handle, "VUID-vkBindBufferMemory-size-01037",
                                 "%s: memory size minus memoryOffset is 0x%" PRIxLEAST64
                                 " but must be at least as large as VkMemoryRequirements::size value 0x%" PRIxLEAST64
@@ -4327,7 +4336,7 @@ bool PreCallValidateBindBufferMemory(layer_data *dev_data, VkBuffer buffer, BUFF
                     validation_error = "VUID-vkBindBufferMemory-memory-01508";
                 }
                 skip |=
-                    log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_EXT,
+                    log_msg(device_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_EXT,
                             buffer_handle, validation_error,
                             "%s: for dedicated memory allocation 0x%" PRIxLEAST64
                             ", VkMemoryDedicatedAllocateInfoKHR::buffer 0x%" PRIXLEAST64 " must be equal to buffer 0x%" PRIxLEAST64
@@ -4339,45 +4348,72 @@ bool PreCallValidateBindBufferMemory(layer_data *dev_data, VkBuffer buffer, BUFF
     return skip;
 }
 
-void PostCallRecordBindBufferMemory(layer_data *dev_data, VkBuffer buffer, BUFFER_STATE *buffer_state, VkDeviceMemory mem,
-                                    VkDeviceSize memoryOffset, const char *api_name) {
-    if (buffer_state) {
-        unique_lock_t lock(global_lock);
-        // Track bound memory range information
-        auto mem_info = GetMemObjInfo(dev_data, mem);
-        if (mem_info) {
-            InsertBufferMemoryRange(dev_data, buffer, mem_info, memoryOffset, buffer_state->requirements);
-        }
+bool PreCallValidateBindBufferMemory(VkDevice device, VkBuffer buffer, VkDeviceMemory mem, VkDeviceSize memoryOffset) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
+    const char *api_name = "vkBindBufferMemory()";
+    return ValidateBindBufferMemory(device_data, buffer, mem, memoryOffset, api_name);
+}
 
+void UpdateBindBufferMemoryState(layer_data *device_data, VkBuffer buffer, VkDeviceMemory mem, VkDeviceSize memoryOffset) {
+    BUFFER_STATE *buffer_state = GetBufferState(device_data, buffer);
+    if (buffer_state) {
+        // Track bound memory range information
+        auto mem_info = GetMemObjInfo(device_data, mem);
+        if (mem_info) {
+            InsertBufferMemoryRange(device_data, buffer, mem_info, memoryOffset, buffer_state->requirements);
+        }
         // Track objects tied to memory
         uint64_t buffer_handle = HandleToUint64(buffer);
-        SetMemBinding(dev_data, mem, buffer_state, memoryOffset, buffer_handle, kVulkanObjectTypeBuffer, api_name);
+        SetMemBinding(device_data, mem, buffer_state, memoryOffset, buffer_handle, kVulkanObjectTypeBuffer);
     }
 }
 
-bool PreCallValidateBindBufferMemory2(layer_data *dev_data, std::vector<BUFFER_STATE *> *buffer_state, uint32_t bindInfoCount,
-                                      const VkBindBufferMemoryInfoKHR *pBindInfos) {
-    {
-        unique_lock_t lock(global_lock);
-        for (uint32_t i = 0; i < bindInfoCount; i++) {
-            (*buffer_state)[i] = GetBufferState(dev_data, pBindInfos[i].buffer);
-        }
-    }
-    bool skip = false;
+void PostCallRecordBindBufferMemory(VkDevice device, VkBuffer buffer, VkDeviceMemory mem, VkDeviceSize memoryOffset,
+                                    VkResult result) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
+    if (VK_SUCCESS != result) return;
+    UpdateBindBufferMemoryState(device_data, buffer, mem, memoryOffset);
+}
+
+bool PreCallValidateBindBufferMemory2(VkDevice device, uint32_t bindInfoCount, const VkBindBufferMemoryInfoKHR *pBindInfos) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
     char api_name[64];
+    bool skip = false;
+
     for (uint32_t i = 0; i < bindInfoCount; i++) {
         sprintf(api_name, "vkBindBufferMemory2() pBindInfos[%u]", i);
-        skip |= PreCallValidateBindBufferMemory(dev_data, pBindInfos[i].buffer, (*buffer_state)[i], pBindInfos[i].memory,
-                                                pBindInfos[i].memoryOffset, api_name);
+        skip |=
+            ValidateBindBufferMemory(device_data, pBindInfos[i].buffer, pBindInfos[i].memory, pBindInfos[i].memoryOffset, api_name);
     }
     return skip;
 }
 
-void PostCallRecordBindBufferMemory2(layer_data *dev_data, const std::vector<BUFFER_STATE *> &buffer_state, uint32_t bindInfoCount,
-                                     const VkBindBufferMemoryInfoKHR *pBindInfos) {
+bool PreCallValidateBindBufferMemory2KHR(VkDevice device, uint32_t bindInfoCount, const VkBindBufferMemoryInfoKHR *pBindInfos) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
+    char api_name[64];
+    bool skip = false;
+
     for (uint32_t i = 0; i < bindInfoCount; i++) {
-        PostCallRecordBindBufferMemory(dev_data, pBindInfos[i].buffer, buffer_state[i], pBindInfos[i].memory,
-                                       pBindInfos[i].memoryOffset, "vkBindBufferMemory2()");
+        sprintf(api_name, "vkBindBufferMemory2KHR() pBindInfos[%u]", i);
+        skip |=
+            ValidateBindBufferMemory(device_data, pBindInfos[i].buffer, pBindInfos[i].memory, pBindInfos[i].memoryOffset, api_name);
+    }
+    return skip;
+}
+
+void PostCallRecordBindBufferMemory2(VkDevice device, uint32_t bindInfoCount, const VkBindBufferMemoryInfoKHR *pBindInfos,
+                                     VkResult result) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
+    for (uint32_t i = 0; i < bindInfoCount; i++) {
+        UpdateBindBufferMemoryState(device_data, pBindInfos[i].buffer, pBindInfos[i].memory, pBindInfos[i].memoryOffset);
+    }
+}
+
+void PostCallRecordBindBufferMemory2KHR(VkDevice device, uint32_t bindInfoCount, const VkBindBufferMemoryInfoKHR *pBindInfos,
+                                        VkResult result) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
+    for (uint32_t i = 0; i < bindInfoCount; i++) {
+        UpdateBindBufferMemoryState(device_data, pBindInfos[i].buffer, pBindInfos[i].memory, pBindInfos[i].memoryOffset);
     }
 }
 
@@ -4581,22 +4617,25 @@ static void FreeCommandBufferStates(layer_data *dev_data, COMMAND_POOL_NODE *poo
     }
 }
 
-bool PreCallValidateFreeCommandBuffers(layer_data *dev_data, uint32_t commandBufferCount, const VkCommandBuffer *pCommandBuffers) {
+bool PreCallValidateFreeCommandBuffers(VkDevice device, VkCommandPool commandPool, uint32_t commandBufferCount,
+                                       const VkCommandBuffer *pCommandBuffers) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
     bool skip = false;
     for (uint32_t i = 0; i < commandBufferCount; i++) {
-        auto cb_node = GetCBNode(dev_data, pCommandBuffers[i]);
+        auto cb_node = GetCBNode(device_data, pCommandBuffers[i]);
         // Delete CB information structure, and remove from commandBufferMap
         if (cb_node) {
-            skip |= CheckCommandBufferInFlight(dev_data, cb_node, "free", "VUID-vkFreeCommandBuffers-pCommandBuffers-00047");
+            skip |= CheckCommandBufferInFlight(device_data, cb_node, "free", "VUID-vkFreeCommandBuffers-pCommandBuffers-00047");
         }
     }
     return skip;
 }
 
-void PreCallRecordFreeCommandBuffers(layer_data *dev_data, VkCommandPool commandPool, uint32_t commandBufferCount,
+void PreCallRecordFreeCommandBuffers(VkDevice device, VkCommandPool commandPool, uint32_t commandBufferCount,
                                      const VkCommandBuffer *pCommandBuffers) {
-    auto pPool = GetCommandPoolNode(dev_data, commandPool);
-    FreeCommandBufferStates(dev_data, pPool, commandBufferCount, pCommandBuffers);
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
+    auto pPool = GetCommandPoolNode(device_data, commandPool);
+    FreeCommandBufferStates(device_data, pPool, commandBufferCount, pCommandBuffers);
 }
 
 void PostCallRecordCreateCommandPool(layer_data *dev_data, const VkCommandPoolCreateInfo *pCreateInfo,
@@ -5903,22 +5942,24 @@ void PreCallRecordUpdateDescriptorSets(layer_data *dev_data, uint32_t descriptor
                                                  pDescriptorCopies);
 }
 
-void PostCallRecordAllocateCommandBuffers(layer_data *dev_data, VkDevice device, const VkCommandBufferAllocateInfo *pCreateInfo,
-                                          VkCommandBuffer *pCommandBuffer) {
-    auto pPool = GetCommandPoolNode(dev_data, pCreateInfo->commandPool);
+void PostCallRecordAllocateCommandBuffers(VkDevice device, const VkCommandBufferAllocateInfo *pCreateInfo,
+                                          VkCommandBuffer *pCommandBuffer, VkResult result) {
+    if (VK_SUCCESS != result) return;
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
+    auto pPool = GetCommandPoolNode(device_data, pCreateInfo->commandPool);
     if (pPool) {
         for (uint32_t i = 0; i < pCreateInfo->commandBufferCount; i++) {
             // Add command buffer to its commandPool map
             pPool->commandBuffers.insert(pCommandBuffer[i]);
             GLOBAL_CB_NODE *pCB = new GLOBAL_CB_NODE;
             // Add command buffer to map
-            dev_data->commandBufferMap[pCommandBuffer[i]] = pCB;
-            ResetCommandBufferState(dev_data, pCommandBuffer[i]);
+            device_data->commandBufferMap[pCommandBuffer[i]] = pCB;
+            ResetCommandBufferState(device_data, pCommandBuffer[i]);
             pCB->createInfo = *pCreateInfo;
             pCB->device = device;
         }
-        if (GetEnables(dev_data)->gpu_validation) {
-            GpuPostCallRecordAllocateCommandBuffers(dev_data, pCreateInfo, pCommandBuffer);
+        if (GetEnables(device_data)->gpu_validation) {
+            GpuPostCallRecordAllocateCommandBuffers(device_data, pCreateInfo, pCommandBuffer);
         }
     }
 }
@@ -5937,12 +5978,13 @@ static void AddFramebufferBinding(layer_data *dev_data, GLOBAL_CB_NODE *cb_state
     }
 }
 
-bool PreCallValidateBeginCommandBuffer(layer_data *dev_data, const GLOBAL_CB_NODE *cb_state, const VkCommandBuffer commandBuffer,
-                                       const VkCommandBufferBeginInfo *pBeginInfo) {
-    assert(cb_state);
+bool PreCallValidateBeginCommandBuffer(const VkCommandBuffer commandBuffer, const VkCommandBufferBeginInfo *pBeginInfo) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(commandBuffer), layer_data_map);
+    GLOBAL_CB_NODE *cb_state = GetCBNode(device_data, commandBuffer);
+    if (!cb_state) return false;
     bool skip = false;
     if (cb_state->in_use.load()) {
-        skip |= log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_BUFFER_EXT,
+        skip |= log_msg(device_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_BUFFER_EXT,
                         HandleToUint64(commandBuffer), "VUID-vkBeginCommandBuffer-commandBuffer-00049",
                         "Calling vkBeginCommandBuffer() on active command buffer %" PRIx64
                         " before it has completed. You must check command buffer fence before this call.",
@@ -5952,7 +5994,7 @@ bool PreCallValidateBeginCommandBuffer(layer_data *dev_data, const GLOBAL_CB_NOD
         // Secondary Command Buffer
         const VkCommandBufferInheritanceInfo *pInfo = pBeginInfo->pInheritanceInfo;
         if (!pInfo) {
-            skip |= log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_BUFFER_EXT,
+            skip |= log_msg(device_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_BUFFER_EXT,
                             HandleToUint64(commandBuffer), "VUID-vkBeginCommandBuffer-commandBuffer-00051",
                             "vkBeginCommandBuffer(): Secondary Command Buffer (0x%" PRIx64 ") must have inheritance info.",
                             HandleToUint64(commandBuffer));
@@ -5960,21 +6002,21 @@ bool PreCallValidateBeginCommandBuffer(layer_data *dev_data, const GLOBAL_CB_NOD
             if (pBeginInfo->flags & VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT) {
                 assert(pInfo->renderPass);
                 string errorString = "";
-                auto framebuffer = GetFramebufferState(dev_data, pInfo->framebuffer);
+                auto framebuffer = GetFramebufferState(device_data, pInfo->framebuffer);
                 if (framebuffer) {
                     if (framebuffer->createInfo.renderPass != pInfo->renderPass) {
                         // renderPass that framebuffer was created with must be compatible with local renderPass
                         skip |=
-                            ValidateRenderPassCompatibility(dev_data, "framebuffer", framebuffer->rp_state.get(), "command buffer",
-                                                            GetRenderPassState(dev_data, pInfo->renderPass),
+                            ValidateRenderPassCompatibility(device_data, "framebuffer", framebuffer->rp_state.get(),
+                                                            "command buffer", GetRenderPassState(device_data, pInfo->renderPass),
                                                             "vkBeginCommandBuffer()", "VUID-VkCommandBufferBeginInfo-flags-00055");
                     }
                 }
             }
-            if ((pInfo->occlusionQueryEnable == VK_FALSE || dev_data->enabled_features.core.occlusionQueryPrecise == VK_FALSE) &&
+            if ((pInfo->occlusionQueryEnable == VK_FALSE || device_data->enabled_features.core.occlusionQueryPrecise == VK_FALSE) &&
                 (pInfo->queryFlags & VK_QUERY_CONTROL_PRECISE_BIT)) {
                 skip |=
-                    log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_BUFFER_EXT,
+                    log_msg(device_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_BUFFER_EXT,
                             HandleToUint64(commandBuffer), "VUID-vkBeginCommandBuffer-commandBuffer-00052",
                             "vkBeginCommandBuffer(): Secondary Command Buffer (0x%" PRIx64
                             ") must not have VK_QUERY_CONTROL_PRECISE_BIT if occulusionQuery is disabled or the device "
@@ -5983,10 +6025,10 @@ bool PreCallValidateBeginCommandBuffer(layer_data *dev_data, const GLOBAL_CB_NOD
             }
         }
         if (pInfo && pInfo->renderPass != VK_NULL_HANDLE) {
-            auto renderPass = GetRenderPassState(dev_data, pInfo->renderPass);
+            auto renderPass = GetRenderPassState(device_data, pInfo->renderPass);
             if (renderPass) {
                 if (pInfo->subpass >= renderPass->createInfo.subpassCount) {
-                    skip |= log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT,
+                    skip |= log_msg(device_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT,
                                     VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_BUFFER_EXT, HandleToUint64(commandBuffer),
                                     "VUID-VkCommandBufferBeginInfo-flags-00054",
                                     "vkBeginCommandBuffer(): Secondary Command Buffers (0x%" PRIx64
@@ -5997,16 +6039,16 @@ bool PreCallValidateBeginCommandBuffer(layer_data *dev_data, const GLOBAL_CB_NOD
         }
     }
     if (CB_RECORDING == cb_state->state) {
-        skip |= log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_BUFFER_EXT,
+        skip |= log_msg(device_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_BUFFER_EXT,
                         HandleToUint64(commandBuffer), "VUID-vkBeginCommandBuffer-commandBuffer-00049",
                         "vkBeginCommandBuffer(): Cannot call Begin on command buffer (0x%" PRIx64
                         ") in the RECORDING state. Must first call vkEndCommandBuffer().",
                         HandleToUint64(commandBuffer));
     } else if (CB_RECORDED == cb_state->state || CB_INVALID_COMPLETE == cb_state->state) {
         VkCommandPool cmdPool = cb_state->createInfo.commandPool;
-        auto pPool = GetCommandPoolNode(dev_data, cmdPool);
+        auto pPool = GetCommandPoolNode(device_data, cmdPool);
         if (!(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT & pPool->createFlags)) {
-            skip |= log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_BUFFER_EXT,
+            skip |= log_msg(device_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_BUFFER_EXT,
                             HandleToUint64(commandBuffer), "VUID-vkBeginCommandBuffer-commandBuffer-00050",
                             "Call to vkBeginCommandBuffer() on command buffer (0x%" PRIx64
                             ") attempts to implicitly reset cmdBuffer created from command pool (0x%" PRIx64
@@ -6017,27 +6059,28 @@ bool PreCallValidateBeginCommandBuffer(layer_data *dev_data, const GLOBAL_CB_NOD
     return skip;
 }
 
-void PreCallRecordBeginCommandBuffer(layer_data *dev_data, GLOBAL_CB_NODE *cb_state, const VkCommandBuffer commandBuffer,
-                                     const VkCommandBufferBeginInfo *pBeginInfo) {
-    assert(cb_state);
+void PreCallRecordBeginCommandBuffer(const VkCommandBuffer commandBuffer, const VkCommandBufferBeginInfo *pBeginInfo) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(commandBuffer), layer_data_map);
+    GLOBAL_CB_NODE *cb_state = GetCBNode(device_data, commandBuffer);
+    if (!cb_state) return;
     // This implicitly resets the Cmd Buffer so make sure any fence is done and then clear memory references
-    ClearCmdBufAndMemReferences(dev_data, cb_state);
+    ClearCmdBufAndMemReferences(device_data, cb_state);
     if (cb_state->createInfo.level != VK_COMMAND_BUFFER_LEVEL_PRIMARY) {
         // Secondary Command Buffer
         const VkCommandBufferInheritanceInfo *pInfo = pBeginInfo->pInheritanceInfo;
         if (pInfo) {
             if (pBeginInfo->flags & VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT) {
                 assert(pInfo->renderPass);
-                auto framebuffer = GetFramebufferState(dev_data, pInfo->framebuffer);
+                auto framebuffer = GetFramebufferState(device_data, pInfo->framebuffer);
                 if (framebuffer) {
                     // Connect this framebuffer and its children to this cmdBuffer
-                    AddFramebufferBinding(dev_data, cb_state, framebuffer);
+                    AddFramebufferBinding(device_data, cb_state, framebuffer);
                 }
             }
         }
     }
     if (CB_RECORDED == cb_state->state || CB_INVALID_COMPLETE == cb_state->state) {
-        ResetCommandBufferState(dev_data, commandBuffer);
+        ResetCommandBufferState(device_data, commandBuffer);
     }
     // Set updated state here in case implicit reset occurs above
     cb_state->state = CB_RECORDING;
@@ -6048,7 +6091,7 @@ void PreCallRecordBeginCommandBuffer(layer_data *dev_data, GLOBAL_CB_NODE *cb_st
         // If we are a secondary command-buffer and inheriting.  Update the items we should inherit.
         if ((cb_state->createInfo.level != VK_COMMAND_BUFFER_LEVEL_PRIMARY) &&
             (cb_state->beginInfo.flags & VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT)) {
-            cb_state->activeRenderPass = GetRenderPassState(dev_data, cb_state->beginInfo.pInheritanceInfo->renderPass);
+            cb_state->activeRenderPass = GetRenderPassState(device_data, cb_state->beginInfo.pInheritanceInfo->renderPass);
             cb_state->activeSubpass = cb_state->beginInfo.pInheritanceInfo->subpass;
             cb_state->activeFramebuffer = cb_state->beginInfo.pInheritanceInfo->framebuffer;
             cb_state->framebuffers.insert(cb_state->beginInfo.pInheritanceInfo->framebuffer);
@@ -6056,17 +6099,20 @@ void PreCallRecordBeginCommandBuffer(layer_data *dev_data, GLOBAL_CB_NODE *cb_st
     }
 }
 
-bool PreCallValidateEndCommandBuffer(layer_data *dev_data, GLOBAL_CB_NODE *cb_state, VkCommandBuffer commandBuffer) {
+bool PreCallValidateEndCommandBuffer(VkCommandBuffer commandBuffer) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(commandBuffer), layer_data_map);
+    GLOBAL_CB_NODE *cb_state = GetCBNode(device_data, commandBuffer);
+    if (!cb_state) return false;
     bool skip = false;
     if ((VK_COMMAND_BUFFER_LEVEL_PRIMARY == cb_state->createInfo.level) ||
         !(cb_state->beginInfo.flags & VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT)) {
         // This needs spec clarification to update valid usage, see comments in PR:
         // https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/165
-        skip |= InsideRenderPass(dev_data, cb_state, "vkEndCommandBuffer()", "VUID-vkEndCommandBuffer-commandBuffer-00060");
+        skip |= InsideRenderPass(device_data, cb_state, "vkEndCommandBuffer()", "VUID-vkEndCommandBuffer-commandBuffer-00060");
     }
-    skip |= ValidateCmd(dev_data, cb_state, CMD_ENDCOMMANDBUFFER, "vkEndCommandBuffer()");
+    skip |= ValidateCmd(device_data, cb_state, CMD_ENDCOMMANDBUFFER, "vkEndCommandBuffer()");
     for (auto query : cb_state->activeQueries) {
-        skip |= log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_BUFFER_EXT,
+        skip |= log_msg(device_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_BUFFER_EXT,
                         HandleToUint64(commandBuffer), "VUID-vkEndCommandBuffer-commandBuffer-00061",
                         "Ending command buffer with in progress query: queryPool 0x%" PRIx64 ", index %d.",
                         HandleToUint64(query.pool), query.index);
@@ -6074,7 +6120,10 @@ bool PreCallValidateEndCommandBuffer(layer_data *dev_data, GLOBAL_CB_NODE *cb_st
     return skip;
 }
 
-void PostCallRecordEndCommandBuffer(layer_data *dev_data, GLOBAL_CB_NODE *cb_state, const VkResult &result) {
+void PostCallRecordEndCommandBuffer(VkCommandBuffer commandBuffer, VkResult result) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(commandBuffer), layer_data_map);
+    GLOBAL_CB_NODE *cb_state = GetCBNode(device_data, commandBuffer);
+    if (!cb_state) return;
     // Cached validation is specific to a specific recording of a specific command buffer.
     for (auto descriptor_set : cb_state->validated_descriptor_sets) {
         descriptor_set->ClearCachedValidation(cb_state);
@@ -6085,26 +6134,31 @@ void PostCallRecordEndCommandBuffer(layer_data *dev_data, GLOBAL_CB_NODE *cb_sta
     }
 }
 
-bool PreCallValidateResetCommandBuffer(layer_data *dev_data, VkCommandBuffer commandBuffer) {
+bool PreCallValidateResetCommandBuffer(VkCommandBuffer commandBuffer, VkCommandBufferResetFlags flags) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(commandBuffer), layer_data_map);
     bool skip = false;
-    GLOBAL_CB_NODE *pCB = GetCBNode(dev_data, commandBuffer);
+    GLOBAL_CB_NODE *pCB = GetCBNode(device_data, commandBuffer);
+    if (!pCB) return false;
     VkCommandPool cmdPool = pCB->createInfo.commandPool;
-    auto pPool = GetCommandPoolNode(dev_data, cmdPool);
+    auto pPool = GetCommandPoolNode(device_data, cmdPool);
 
     if (!(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT & pPool->createFlags)) {
-        skip |= log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_BUFFER_EXT,
+        skip |= log_msg(device_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_BUFFER_EXT,
                         HandleToUint64(commandBuffer), "VUID-vkResetCommandBuffer-commandBuffer-00046",
                         "Attempt to reset command buffer (0x%" PRIx64 ") created from command pool (0x%" PRIx64
                         ") that does NOT have the VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT bit set.",
                         HandleToUint64(commandBuffer), HandleToUint64(cmdPool));
     }
-    skip |= CheckCommandBufferInFlight(dev_data, pCB, "reset", "VUID-vkResetCommandBuffer-commandBuffer-00045");
+    skip |= CheckCommandBufferInFlight(device_data, pCB, "reset", "VUID-vkResetCommandBuffer-commandBuffer-00045");
 
     return skip;
 }
 
-void PostCallRecordResetCommandBuffer(layer_data *dev_data, VkCommandBuffer commandBuffer) {
-    ResetCommandBufferState(dev_data, commandBuffer);
+void PostCallRecordResetCommandBuffer(VkCommandBuffer commandBuffer, VkCommandBufferResetFlags flags, VkResult result) {
+    if (VK_SUCCESS == result) {
+        layer_data *device_data = GetLayerDataPtr(get_dispatch_key(commandBuffer), layer_data_map);
+        ResetCommandBufferState(device_data, commandBuffer);
+    }
 }
 
 bool PreCallValidateCmdBindPipeline(layer_data *dev_data, GLOBAL_CB_NODE *cb_state) {
@@ -9987,42 +10041,51 @@ void PreCallRecordCmdExecuteCommands(layer_data *dev_data, GLOBAL_CB_NODE *cb_st
     }
 }
 
-bool PreCallValidateMapMemory(layer_data *dev_data, VkDevice device, VkDeviceMemory mem, VkDeviceSize offset, VkDeviceSize size) {
+bool PreCallValidateMapMemory(VkDevice device, VkDeviceMemory mem, VkDeviceSize offset, VkDeviceSize size, VkFlags flags,
+                              void **ppData) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
     bool skip = false;
-    DEVICE_MEM_INFO *mem_info = GetMemObjInfo(dev_data, mem);
+    DEVICE_MEM_INFO *mem_info = GetMemObjInfo(device_data, mem);
     if (mem_info) {
         auto end_offset = (VK_WHOLE_SIZE == size) ? mem_info->alloc_info.allocationSize - 1 : offset + size - 1;
-        skip |= ValidateMapImageLayouts(dev_data, device, mem_info, offset, end_offset);
-        if ((dev_data->phys_dev_mem_props.memoryTypes[mem_info->alloc_info.memoryTypeIndex].propertyFlags &
+        skip |= ValidateMapImageLayouts(device_data, device, mem_info, offset, end_offset);
+        if ((device_data->phys_dev_mem_props.memoryTypes[mem_info->alloc_info.memoryTypeIndex].propertyFlags &
              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0) {
-            skip = log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_MEMORY_EXT,
+            skip = log_msg(device_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_MEMORY_EXT,
                            HandleToUint64(mem), "VUID-vkMapMemory-memory-00682",
                            "Mapping Memory without VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT set: mem obj 0x%" PRIx64 ".",
                            HandleToUint64(mem));
         }
     }
-    skip |= ValidateMapMemRange(dev_data, mem, offset, size);
+    skip |= ValidateMapMemRange(device_data, mem, offset, size);
     return skip;
 }
 
-void PostCallRecordMapMemory(layer_data *dev_data, VkDeviceMemory mem, VkDeviceSize offset, VkDeviceSize size, void **ppData) {
+void PostCallRecordMapMemory(VkDevice device, VkDeviceMemory mem, VkDeviceSize offset, VkDeviceSize size, VkFlags flags,
+                             void **ppData, VkResult result) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
+    if (VK_SUCCESS != result) return;
     // TODO : What's the point of this range? See comment on creating new "bound_range" above, which may replace this
-    StoreMemRanges(dev_data, mem, offset, size);
-    InitializeAndTrackMemory(dev_data, mem, offset, size, ppData);
+    StoreMemRanges(device_data, mem, offset, size);
+    InitializeAndTrackMemory(device_data, mem, offset, size, ppData);
 }
 
-bool PreCallValidateUnmapMemory(const layer_data *dev_data, DEVICE_MEM_INFO *mem_info, const VkDeviceMemory mem) {
+bool PreCallValidateUnmapMemory(VkDevice device, VkDeviceMemory mem) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
     bool skip = false;
-    if (!mem_info->mem_range.size) {
+    auto mem_info = GetMemObjInfo(device_data, mem);
+    if (mem_info && !mem_info->mem_range.size) {
         // Valid Usage: memory must currently be mapped
-        skip |= log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_MEMORY_EXT,
+        skip |= log_msg(device_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_MEMORY_EXT,
                         HandleToUint64(mem), "VUID-vkUnmapMemory-memory-00689",
                         "Unmapping Memory without memory being mapped: mem obj 0x%" PRIx64 ".", HandleToUint64(mem));
     }
     return skip;
 }
 
-void PreCallRecordUnmapMemory(DEVICE_MEM_INFO *mem_info) {
+void PreCallRecordUnmapMemory(VkDevice device, VkDeviceMemory mem) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
+    auto mem_info = GetMemObjInfo(device_data, mem);
     mem_info->mem_range.size = 0;
     if (mem_info->shadow_copy) {
         free(mem_info->shadow_copy_base);
@@ -10139,66 +10202,65 @@ static bool ValidateMappedMemoryRangeDeviceLimits(layer_data *dev_data, const ch
     return skip;
 }
 
-bool PreCallValidateFlushMappedMemoryRanges(layer_data *dev_data, uint32_t mem_range_count, const VkMappedMemoryRange *mem_ranges) {
+bool PreCallValidateFlushMappedMemoryRanges(VkDevice device, uint32_t memRangeCount, const VkMappedMemoryRange *pMemRanges) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
     bool skip = false;
-    lock_guard_t lock(global_lock);
-    skip |= ValidateMappedMemoryRangeDeviceLimits(dev_data, "vkFlushMappedMemoryRanges", mem_range_count, mem_ranges);
-    skip |= ValidateAndCopyNoncoherentMemoryToDriver(dev_data, mem_range_count, mem_ranges);
-    skip |= ValidateMemoryIsMapped(dev_data, "vkFlushMappedMemoryRanges", mem_range_count, mem_ranges);
+    skip |= ValidateMappedMemoryRangeDeviceLimits(device_data, "vkFlushMappedMemoryRanges", memRangeCount, pMemRanges);
+    skip |= ValidateAndCopyNoncoherentMemoryToDriver(device_data, memRangeCount, pMemRanges);
+    skip |= ValidateMemoryIsMapped(device_data, "vkFlushMappedMemoryRanges", memRangeCount, pMemRanges);
     return skip;
 }
 
-bool PreCallValidateInvalidateMappedMemoryRanges(layer_data *dev_data, uint32_t mem_range_count,
-                                                 const VkMappedMemoryRange *mem_ranges) {
+bool PreCallValidateInvalidateMappedMemoryRanges(VkDevice device, uint32_t memRangeCount, const VkMappedMemoryRange *pMemRanges) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
     bool skip = false;
-    lock_guard_t lock(global_lock);
-    skip |= ValidateMappedMemoryRangeDeviceLimits(dev_data, "vkInvalidateMappedMemoryRanges", mem_range_count, mem_ranges);
-    skip |= ValidateMemoryIsMapped(dev_data, "vkInvalidateMappedMemoryRanges", mem_range_count, mem_ranges);
+    skip |= ValidateMappedMemoryRangeDeviceLimits(device_data, "vkInvalidateMappedMemoryRanges", memRangeCount, pMemRanges);
+    skip |= ValidateMemoryIsMapped(device_data, "vkInvalidateMappedMemoryRanges", memRangeCount, pMemRanges);
     return skip;
 }
 
-void PostCallRecordInvalidateMappedMemoryRanges(layer_data *dev_data, uint32_t mem_range_count,
-                                                const VkMappedMemoryRange *mem_ranges) {
-    lock_guard_t lock(global_lock);
-    // Update our shadow copy with modified driver data
-    CopyNoncoherentMemoryFromDriver(dev_data, mem_range_count, mem_ranges);
+void PostCallRecordInvalidateMappedMemoryRanges(VkDevice device, uint32_t memRangeCount, const VkMappedMemoryRange *pMemRanges,
+                                                VkResult result) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
+    if (VK_SUCCESS == result) {
+        // Update our shadow copy with modified driver data
+        CopyNoncoherentMemoryFromDriver(device_data, memRangeCount, pMemRanges);
+    }
 }
 
-bool PreCallValidateBindImageMemory(layer_data *dev_data, VkImage image, IMAGE_STATE *image_state, VkDeviceMemory mem,
-                                    VkDeviceSize memoryOffset, const char *api_name) {
+bool ValidateBindImageMemory(layer_data *device_data, VkImage image, VkDeviceMemory mem, VkDeviceSize memoryOffset,
+                             const char *api_name) {
     bool skip = false;
+    IMAGE_STATE *image_state = GetImageState(device_data, image);
     if (image_state) {
-        unique_lock_t lock(global_lock);
         // Track objects tied to memory
         uint64_t image_handle = HandleToUint64(image);
-        skip = ValidateSetMemBinding(dev_data, mem, image_handle, kVulkanObjectTypeImage, api_name);
+        skip = ValidateSetMemBinding(device_data, mem, image_handle, kVulkanObjectTypeImage, api_name);
         if (!image_state->memory_requirements_checked) {
             // There's not an explicit requirement in the spec to call vkGetImageMemoryRequirements() prior to calling
             // BindImageMemory but it's implied in that memory being bound must conform with VkMemoryRequirements from
             // vkGetImageMemoryRequirements()
-            skip |= log_msg(dev_data->report_data, VK_DEBUG_REPORT_WARNING_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT,
+            skip |= log_msg(device_data->report_data, VK_DEBUG_REPORT_WARNING_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT,
                             image_handle, kVUID_Core_DrawState_InvalidImage,
                             "%s: Binding memory to image 0x%" PRIx64
                             " but vkGetImageMemoryRequirements() has not been called on that image.",
                             api_name, HandleToUint64(image_handle));
             // Make the call for them so we can verify the state
-            lock.unlock();
-            dev_data->dispatch_table.GetImageMemoryRequirements(dev_data->device, image, &image_state->requirements);
-            lock.lock();
+            device_data->dispatch_table.GetImageMemoryRequirements(device_data->device, image, &image_state->requirements);
         }
 
         // Validate bound memory range information
-        auto mem_info = GetMemObjInfo(dev_data, mem);
+        auto mem_info = GetMemObjInfo(device_data, mem);
         if (mem_info) {
-            skip |= ValidateInsertImageMemoryRange(dev_data, image, mem_info, memoryOffset, image_state->requirements,
+            skip |= ValidateInsertImageMemoryRange(device_data, image, mem_info, memoryOffset, image_state->requirements,
                                                    image_state->createInfo.tiling == VK_IMAGE_TILING_LINEAR, api_name);
-            skip |= ValidateMemoryTypes(dev_data, mem_info, image_state->requirements.memoryTypeBits, api_name,
+            skip |= ValidateMemoryTypes(device_data, mem_info, image_state->requirements.memoryTypeBits, api_name,
                                         "VUID-vkBindImageMemory-memory-01047");
         }
 
         // Validate memory requirements alignment
         if (SafeModulo(memoryOffset, image_state->requirements.alignment) != 0) {
-            skip |= log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT,
+            skip |= log_msg(device_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT,
                             image_handle, "VUID-vkBindImageMemory-memoryOffset-01048",
                             "%s: memoryOffset is 0x%" PRIxLEAST64
                             " but must be an integer multiple of the VkMemoryRequirements::alignment value 0x%" PRIxLEAST64
@@ -10209,7 +10271,7 @@ bool PreCallValidateBindImageMemory(layer_data *dev_data, VkImage image, IMAGE_S
         if (mem_info) {
             // Validate memory requirements size
             if (image_state->requirements.size > mem_info->alloc_info.allocationSize - memoryOffset) {
-                skip |= log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT,
+                skip |= log_msg(device_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT,
                                 image_handle, "VUID-vkBindImageMemory-size-01049",
                                 "%s: memory size minus memoryOffset is 0x%" PRIxLEAST64
                                 " but must be at least as large as VkMemoryRequirements::size value 0x%" PRIxLEAST64
@@ -10225,7 +10287,7 @@ bool PreCallValidateBindImageMemory(layer_data *dev_data, VkImage image, IMAGE_S
                     validation_error = "VUID-vkBindImageMemory-memory-01509";
                 }
                 skip |=
-                    log_msg(dev_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_EXT,
+                    log_msg(device_data->report_data, VK_DEBUG_REPORT_ERROR_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_EXT,
                             image_handle, validation_error,
                             "%s: for dedicated memory allocation 0x%" PRIxLEAST64
                             ", VkMemoryDedicatedAllocateInfoKHR::image 0x%" PRIXLEAST64 " must be equal to image 0x%" PRIxLEAST64
@@ -10237,46 +10299,72 @@ bool PreCallValidateBindImageMemory(layer_data *dev_data, VkImage image, IMAGE_S
     return skip;
 }
 
-void PostCallRecordBindImageMemory(layer_data *dev_data, VkImage image, IMAGE_STATE *image_state, VkDeviceMemory mem,
-                                   VkDeviceSize memoryOffset, const char *api_name) {
+bool PreCallValidateBindImageMemory(VkDevice device, VkImage image, VkDeviceMemory mem, VkDeviceSize memoryOffset) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
+    return ValidateBindImageMemory(device_data, image, mem, memoryOffset, "vkBindImageMemory()");
+}
+
+void UpdateBindImageMemoryState(layer_data *device_data, VkImage image, VkDeviceMemory mem, VkDeviceSize memoryOffset) {
+    IMAGE_STATE *image_state = GetImageState(device_data, image);
     if (image_state) {
-        unique_lock_t lock(global_lock);
         // Track bound memory range information
-        auto mem_info = GetMemObjInfo(dev_data, mem);
+        auto mem_info = GetMemObjInfo(device_data, mem);
         if (mem_info) {
-            InsertImageMemoryRange(dev_data, image, mem_info, memoryOffset, image_state->requirements,
+            InsertImageMemoryRange(device_data, image, mem_info, memoryOffset, image_state->requirements,
                                    image_state->createInfo.tiling == VK_IMAGE_TILING_LINEAR);
         }
 
         // Track objects tied to memory
         uint64_t image_handle = HandleToUint64(image);
-        SetMemBinding(dev_data, mem, image_state, memoryOffset, image_handle, kVulkanObjectTypeImage, api_name);
+        SetMemBinding(device_data, mem, image_state, memoryOffset, image_handle, kVulkanObjectTypeImage);
     }
 }
 
-bool PreCallValidateBindImageMemory2(layer_data *dev_data, std::vector<IMAGE_STATE *> *image_state, uint32_t bindInfoCount,
-                                     const VkBindImageMemoryInfoKHR *pBindInfos) {
-    {
-        unique_lock_t lock(global_lock);
-        for (uint32_t i = 0; i < bindInfoCount; i++) {
-            (*image_state)[i] = GetImageState(dev_data, pBindInfos[i].image);
-        }
-    }
+void PostCallRecordBindImageMemory(VkDevice device, VkImage image, VkDeviceMemory mem, VkDeviceSize memoryOffset, VkResult result) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
+    if (VK_SUCCESS != result) return;
+    UpdateBindImageMemoryState(device_data, image, mem, memoryOffset);
+}
+
+bool PreCallValidateBindImageMemory2(VkDevice device, uint32_t bindInfoCount, const VkBindImageMemoryInfoKHR *pBindInfos) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
     bool skip = false;
     char api_name[128];
     for (uint32_t i = 0; i < bindInfoCount; i++) {
         sprintf(api_name, "vkBindImageMemory2() pBindInfos[%u]", i);
-        skip |= PreCallValidateBindImageMemory(dev_data, pBindInfos[i].image, (*image_state)[i], pBindInfos[i].memory,
-                                               pBindInfos[i].memoryOffset, api_name);
+        skip |=
+            ValidateBindImageMemory(device_data, pBindInfos[i].image, pBindInfos[i].memory, pBindInfos[i].memoryOffset, api_name);
     }
     return skip;
 }
 
-void PostCallRecordBindImageMemory2(layer_data *dev_data, const std::vector<IMAGE_STATE *> &image_state, uint32_t bindInfoCount,
-                                    const VkBindImageMemoryInfoKHR *pBindInfos) {
+bool PreCallValidateBindImageMemory2KHR(VkDevice device, uint32_t bindInfoCount, const VkBindImageMemoryInfoKHR *pBindInfos) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
+    bool skip = false;
+    char api_name[128];
     for (uint32_t i = 0; i < bindInfoCount; i++) {
-        PostCallRecordBindImageMemory(dev_data, pBindInfos[i].image, image_state[i], pBindInfos[i].memory,
-                                      pBindInfos[i].memoryOffset, "vkBindImageMemory2()");
+        sprintf(api_name, "vkBindImageMemory2KHR() pBindInfos[%u]", i);
+        skip |=
+            ValidateBindImageMemory(device_data, pBindInfos[i].image, pBindInfos[i].memory, pBindInfos[i].memoryOffset, api_name);
+    }
+    return skip;
+}
+
+void PostCallRecordBindImageMemory2(VkDevice device, uint32_t bindInfoCount, const VkBindImageMemoryInfoKHR *pBindInfos,
+                                    VkResult result) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
+    if (VK_SUCCESS != result) return;
+    for (uint32_t i = 0; i < bindInfoCount; i++) {
+        UpdateBindImageMemoryState(device_data, pBindInfos[i].image, pBindInfos[i].memory, pBindInfos[i].memoryOffset);
+    }
+}
+
+void PostCallRecordBindImageMemory2KHR(VkDevice device, uint32_t bindInfoCount, const VkBindImageMemoryInfoKHR *pBindInfos,
+                                       VkResult result) {
+    layer_data *device_data = GetLayerDataPtr(get_dispatch_key(device), layer_data_map);
+    if (VK_SUCCESS != result) return;
+    for (uint32_t i = 0; i < bindInfoCount; i++) {
+        UpdateBindImageMemoryState(device_data, pBindInfos[i].image, pBindInfos[i].memory, pBindInfos[i].memoryOffset);
     }
 }
 
