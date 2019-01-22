@@ -337,8 +337,8 @@ void GpuPostCallRecordCreateDevice(layer_data *dev_data) {
     const VkDescriptorSetLayoutCreateInfo debug_desc_layout_info = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, NULL, 0,
                                                                     kNumBindingsInSet, debug_desc_layout_bindings};
 
-    const VkDescriptorSetLayoutCreateInfo dummy_desc_layout_info = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, NULL, 0, 0,
-                                                                    NULL};
+    const VkDescriptorSetLayoutCreateInfo dummy_desc_layout_info = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, NULL, 0,
+                                                                    kNumBindingsInSet, debug_desc_layout_bindings};
 
     VkResult result = dispatch_table->CreateDescriptorSetLayout(GetDevice(dev_data), &debug_desc_layout_info, NULL,
                                                                 &gpu_state->debug_desc_layout);
