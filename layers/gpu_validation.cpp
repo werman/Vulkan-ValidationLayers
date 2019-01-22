@@ -124,7 +124,7 @@ VkResult GpuDeviceMemoryManager::AllocMemoryChunk(MemoryChunk &chunk) {
     VkMemoryAllocateInfo mem_alloc = {};
     VkResult result = VK_SUCCESS;
     bool pass;
-//    void *pData;
+    void *pData;
     const auto *dispatch_table = GetDispatchTable(dev_data_);
 
     buffer_create_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -136,14 +136,24 @@ VkResult GpuDeviceMemoryManager::AllocMemoryChunk(MemoryChunk &chunk) {
     }
 
     dispatch_table->GetBufferMemoryRequirements(GetDevice(dev_data_), buffer, &mem_reqs);
+    LOGCONSOLE("VkMemoryRequirements::size = %lu", mem_reqs.size)
+    LOGCONSOLE("VkMemoryRequirements::alignment = %lu", mem_reqs.alignment)
+    LOGCONSOLE("VkMemoryRequirements::memoryTypeBits = %u", mem_reqs.memoryTypeBits)
 
     mem_alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     mem_alloc.pNext = NULL;
     mem_alloc.allocationSize = mem_reqs.size;
-    pass = MemoryTypeFromProperties(mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &mem_alloc.memoryTypeIndex);
+    pass = MemoryTypeFromProperties(mem_reqs.memoryTypeBits,
+                                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                    &mem_alloc.memoryTypeIndex);
+    LOGCONSOLE("MemoryTypeFromProperties(DEVICE_LOCAL) pass = %s", pass ? "true" : "false")
+    pass = MemoryTypeFromProperties(mem_reqs.memoryTypeBits,
+                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                    &mem_alloc.memoryTypeIndex);
+    LOGCONSOLE("MemoryTypeFromProperties(HOST_VISIBLE | HOST_COHERENT) pass = %s", pass ? "true" : "false")
     if (!pass) {
         dispatch_table->DestroyBuffer(GetDevice(dev_data_), buffer, NULL);
-        return result;
+        return VK_ERROR_INITIALIZATION_FAILED;
     }
     result = dispatch_table->AllocateMemory(GetDevice(dev_data_), &mem_alloc, NULL, &memory);
     if (result != VK_SUCCESS) {
@@ -157,7 +167,7 @@ VkResult GpuDeviceMemoryManager::AllocMemoryChunk(MemoryChunk &chunk) {
         dispatch_table->FreeMemory(GetDevice(dev_data_), memory, NULL);
         return result;
     }
-#if 0
+
     result = dispatch_table->MapMemory(GetDevice(dev_data_), memory, 0, mem_alloc.allocationSize, 0, &pData);
     if (result == VK_SUCCESS) {
         memset(pData, 0, chunk_size_);
@@ -167,7 +177,6 @@ VkResult GpuDeviceMemoryManager::AllocMemoryChunk(MemoryChunk &chunk) {
         dispatch_table->FreeMemory(GetDevice(dev_data_), memory, NULL);
         return result;
     }
-#endif
     chunk.buffer = buffer;
     chunk.memory = memory;
     return result;
@@ -1088,8 +1097,8 @@ static void AnalyzeAndReportError(const layer_data *dev_data, GLOBAL_CB_NODE *cb
 static void ProcessInstrumentationBuffer(const layer_data *dev_data, VkQueue queue, GLOBAL_CB_NODE *cb_node) {
     auto gpu_state = GetGpuValidationState(dev_data);
     if (cb_node && cb_node->hasDrawCmd && cb_node->gpu_output_memory_block.memory) {
-//        VkResult result;
-//        char *pData;
+        VkResult result;
+        char *pData;
         uint32_t block_offset = cb_node->gpu_output_memory_block.offset;
         uint32_t block_size = gpu_state->memory_manager->GetBlockSize();
         uint32_t offset_to_data = 0;
@@ -1099,7 +1108,6 @@ static void ProcessInstrumentationBuffer(const layer_data *dev_data, VkQueue que
         block_offset = (block_offset / map_align) * map_align;
         offset_to_data = cb_node->gpu_output_memory_block.offset - block_offset;
         block_size += offset_to_data;
-#if 0
         result = GetDispatchTable(dev_data)->MapMemory(cb_node->device, cb_node->gpu_output_memory_block.memory, block_offset,
                                                        block_size, 0, (void **)&pData);
         // Analyze debug output buffer
@@ -1107,7 +1115,6 @@ static void ProcessInstrumentationBuffer(const layer_data *dev_data, VkQueue que
             AnalyzeAndReportError(dev_data, cb_node, queue, (uint32_t *)(pData + offset_to_data));
             GetDispatchTable(dev_data)->UnmapMemory(cb_node->device, cb_node->gpu_output_memory_block.memory);
         }
-#endif
     }
 }
 
