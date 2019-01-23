@@ -136,9 +136,9 @@ VkResult GpuDeviceMemoryManager::AllocMemoryChunk(MemoryChunk &chunk) {
     }
 
     dispatch_table->GetBufferMemoryRequirements(GetDevice(dev_data_), buffer, &mem_reqs);
-    LOGCONSOLE("VkMemoryRequirements::size = %lu", mem_reqs.size)
-    LOGCONSOLE("VkMemoryRequirements::alignment = %lu", mem_reqs.alignment)
-    LOGCONSOLE("VkMemoryRequirements::memoryTypeBits = %u", mem_reqs.memoryTypeBits)
+    LOGCONSOLE("VkMemoryRequirements::size = %lu", mem_reqs.size);
+    LOGCONSOLE("VkMemoryRequirements::alignment = %lu", mem_reqs.alignment);
+    LOGCONSOLE("VkMemoryRequirements::memoryTypeBits = %u", mem_reqs.memoryTypeBits);
 
     mem_alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     mem_alloc.pNext = NULL;
@@ -146,11 +146,11 @@ VkResult GpuDeviceMemoryManager::AllocMemoryChunk(MemoryChunk &chunk) {
     pass = MemoryTypeFromProperties(mem_reqs.memoryTypeBits,
                                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                                     &mem_alloc.memoryTypeIndex);
-    LOGCONSOLE("MemoryTypeFromProperties(DEVICE_LOCAL) pass = %s", pass ? "true" : "false")
+    LOGCONSOLE("MemoryTypeFromProperties(DEVICE_LOCAL) pass = %s", pass ? "true" : "false");
     pass = MemoryTypeFromProperties(mem_reqs.memoryTypeBits,
                                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                                     &mem_alloc.memoryTypeIndex);
-    LOGCONSOLE("MemoryTypeFromProperties(HOST_VISIBLE | HOST_COHERENT) pass = %s", pass ? "true" : "false")
+    LOGCONSOLE("MemoryTypeFromProperties(HOST_VISIBLE | HOST_COHERENT) pass = %s", pass ? "true" : "false");
     if (!pass) {
         dispatch_table->DestroyBuffer(GetDevice(dev_data_), buffer, NULL);
         return VK_ERROR_INITIALIZATION_FAILED;
