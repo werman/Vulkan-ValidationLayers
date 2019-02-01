@@ -2812,7 +2812,7 @@ bool PreCallValidateCmdClearAttachments(VkCommandBuffer commandBuffer, uint32_t 
                                     "vkCmdClearAttachments() color attachment index %d is not VK_ATTACHMENT_UNUSED and is out of "
                                     "range for active subpass %d.",
                                     clear_desc->colorAttachment, cb_node->activeSubpass);
-                } else {
+                } else if (framebuffer) {
                     image_view = framebuffer->createInfo
                                      .pAttachments[subpass_desc->pColorAttachments[clear_desc->colorAttachment].attachment];
                 }
@@ -2836,7 +2836,7 @@ bool PreCallValidateCmdClearAttachments(VkCommandBuffer commandBuffer, uint32_t 
                         report_data, VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_BUFFER_EXT,
                         HandleToUint64(commandBuffer), kVUID_Core_DrawState_MissingAttachmentReference,
                         "vkCmdClearAttachments() depth/stencil clear with no depth/stencil attachment in subpass; ignored");
-                } else {
+                } else if (framebuffer) {
                     image_view = framebuffer->createInfo.pAttachments[subpass_desc->pDepthStencilAttachment->attachment];
                 }
             }
